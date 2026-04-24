@@ -6,6 +6,7 @@ import com.ismartcoding.lib.extensions.getIntValue
 import com.ismartcoding.lib.extensions.getLongValue
 import com.ismartcoding.lib.extensions.getStringValue
 import com.ismartcoding.lib.extensions.getTimeSecondsValue
+import com.ismartcoding.lib.isQPlus
 import com.ismartcoding.plain.features.file.DFile
 
 fun Cursor.toFile(cache: MutableMap<String, Int>): DFile {
@@ -18,6 +19,9 @@ fun Cursor.toFile(cache: MutableMap<String, Int>): DFile {
     val mimeType =
         getString(getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE))
     val mediaType = getIntValue(MediaStore.Files.FileColumns.MEDIA_TYPE, cache)
+    val bucketId = if (isQPlus()) {
+        runCatching { getStringValue(MediaStore.MediaColumns.BUCKET_ID, cache) }.getOrDefault("")
+    } else ""
     return DFile(
         title,
         path,
@@ -27,6 +31,7 @@ fun Cursor.toFile(cache: MutableMap<String, Int>): DFile {
         size,
         mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_NONE && (mimeType == null || mimeType == "vnd.android.document/directory"),
         0,
-        id
+        id,
+        bucketId
     )
 }

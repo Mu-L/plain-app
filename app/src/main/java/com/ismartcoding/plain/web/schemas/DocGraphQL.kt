@@ -3,9 +3,11 @@ package com.ismartcoding.plain.web.schemas
 import com.ismartcoding.lib.kgraphql.schema.dsl.SchemaBuilder
 import com.ismartcoding.lib.kgraphql.schema.execution.Executor
 import com.ismartcoding.plain.MainApp
+import com.ismartcoding.plain.enums.DataType
 import com.ismartcoding.plain.features.Permission
 import com.ismartcoding.plain.features.file.FileSortBy
 import com.ismartcoding.plain.features.media.DocsHelper
+import com.ismartcoding.plain.web.loaders.TagsLoader
 import com.ismartcoding.plain.web.models.DocExtGroup
 import com.ismartcoding.plain.web.models.toDocModel
 
@@ -20,6 +22,14 @@ fun SchemaBuilder.addDocQueries() {
             val context = MainApp.instance
             Permission.WRITE_EXTERNAL_STORAGE.checkAsync(context)
             DocsHelper.searchAsync(context, query, limit, offset, sortBy).map { it.toDocModel() }
+        }
+        type<com.ismartcoding.plain.web.models.Doc> {
+            dataProperty("tags") {
+                prepare { item -> item.id.value }
+                loader { ids ->
+                    TagsLoader.load(ids, DataType.DOC)
+                }
+            }
         }
     }
 

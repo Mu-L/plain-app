@@ -5,119 +5,201 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.ismartcoding.lib.channel.Channel
 import com.ismartcoding.lib.helpers.CoroutinesHelper.withIO
 import com.ismartcoding.plain.R
 import com.ismartcoding.plain.enums.AppFeatureType
-import com.ismartcoding.plain.events.PermissionsResultEvent
-import com.ismartcoding.plain.features.locale.LocaleHelper
 import com.ismartcoding.plain.preferences.DocSortByPreference
-import com.ismartcoding.plain.ui.base.ActionButtonSearch
-import com.ismartcoding.plain.ui.base.ActionButtonSort
-import com.ismartcoding.plain.ui.base.HorizontalSpace
-import com.ismartcoding.plain.ui.base.NavigationBackIcon
-import com.ismartcoding.plain.ui.base.NavigationCloseIcon
-import com.ismartcoding.plain.ui.base.NeedPermissionColumn
-import com.ismartcoding.plain.ui.base.PFilterChip
+import com.ismartcoding.plain.preferences.DocTabsModePreference
 import com.ismartcoding.plain.ui.base.PScaffold
-import com.ismartcoding.plain.ui.base.PScrollableTabRow
-import com.ismartcoding.plain.ui.base.PTopAppBar
-import com.ismartcoding.plain.ui.base.PTopRightButton
 import com.ismartcoding.plain.ui.base.pullrefresh.RefreshContentState
-import com.ismartcoding.plain.ui.base.pullrefresh.setRefreshState
 import com.ismartcoding.plain.ui.base.pullrefresh.rememberRefreshLayoutState
-import com.ismartcoding.plain.ui.components.FileSortDialog
+import com.ismartcoding.plain.ui.base.pullrefresh.setRefreshState
 import com.ismartcoding.plain.ui.components.ListSearchBar
 import com.ismartcoding.plain.ui.extensions.reset
 import com.ismartcoding.plain.ui.models.DocsViewModel
-import com.ismartcoding.plain.ui.models.enterSearchMode
+import com.ismartcoding.plain.ui.models.MediaFoldersViewModel
+import com.ismartcoding.plain.ui.models.TagsViewModel
 import com.ismartcoding.plain.ui.models.exitSearchMode
-import com.ismartcoding.plain.ui.models.exitSelectMode
-import com.ismartcoding.plain.ui.models.isAllSelected
 import com.ismartcoding.plain.ui.models.showBottomActions
-import com.ismartcoding.plain.ui.models.toggleSelectAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun DocsPage(navController: NavHostController, docsVM: DocsViewModel = viewModel()) {
+fun DocsPage(
+    navController: NavHostController,
+    docsVM: DocsViewModel = viewModel(),
+    tagsVM: TagsViewModel = viewModel(key = "docTagsVM"),
+    mediaFoldersVM: MediaFoldersViewModel = viewModel(key = "docFoldersVM"),
+) {
     val context = LocalContext.current
-    val itemsState by docsVM.itemsFlow.collectAsState()
-    val filteredItemsState by remember { derivedStateOf { itemsState.filter { docsVM.fileType.value.isEmpty() || it.extension == docsVM.fileType.value } } }
     val scope = rememberCoroutineScope()
-    val scrollStateMap = remember { mutableStateMapOf<Int, LazyListState>() }
-    val pagerState = rememberPagerState(pageCount = { docsVM.tabs.value.size })
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(canScroll = { (scrollStateMap[pagerState.currentPage]?.firstVisibleItemIndex ?: 0) > 0 && !docsVM.selectMode.value })
-    var isFirstTime by remember { mutableStateOf(true) }
-    var hasPermission by remember { mutableStateOf(AppFeatureType.FILES.hasPermission(context)) }
+    val docsState = DocsPageState.create(docsVM, tagsVM, mediaFoldersVM)
+    val pagerState = docsState.pagerState
+    val scrollBehavior = docsState.scrollBehavior
+    val hasPermission = docsState.hasPermission
+    val tagsState = docsState.tagsState
+    val tagsMapState = docsState.tagsMapState
+    val bucketsMap by mediaFoldersVM.bucketsMapFlow.collectAsState()
+    var isFirstPageEffect by remember { mutableStateOf(true) }
+    val docsTagsMap = remember(tagsMapState, tagsState) {
+        tagsMapState.mapValues { entry ->
+            entry.value.mapNotNull { relation -> tagsState.find { it.id == relation.tagId } }
+        }
+    }
 
-    val topRefreshLayoutState = rememberRefreshLayoutState { scope.launch { withIO { docsVM.loadAsync(context) }; setRefreshState(RefreshContentState.Finished) } }
+    val topRefreshLayoutState = rememberRefreshLayoutState {
+        scope.launch {
+            withIO { docsVM.loadAsync(context, tagsVM) }
+            setRefreshState(RefreshContentState.Finished)
+        }
+    }
+
+    BackHandler(enabled = docsVM.selectMode.value || docsVM.showSearchBar.value) {
+        if (docsVM.selectMode.value) {
+            docsVM.selectMode.value = false
+            docsVM.selectedIds.clear()
+        } else if (docsVM.showSearchBar.value && (!docsVM.searchActive.value || docsVM.queryText.value.isEmpty())) {
+            docsVM.exitSearchMode()
+            docsVM.showLoading.value = true
+            scope.launch(Dispatchers.IO) { docsVM.loadAsync(context, tagsVM) }
+        }
+    }
+
+    DocsPageEffects(docsState, docsVM, tagsVM, mediaFoldersVM)
 
     LaunchedEffect(pagerState.currentPage) {
-        if (isFirstTime) { isFirstTime = false; return@LaunchedEffect }
+        if (isFirstPageEffect) {
+            isFirstPageEffect = false
+            return@LaunchedEffect
+        }
         val tab = docsVM.tabs.value.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
-        docsVM.fileType.value = tab.value
-        scope.launch { scrollBehavior.reset(); scrollStateMap[pagerState.currentPage]?.scrollToItem(0) }
-    }
-    val once = rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { if (!once.value) { once.value = true; if (hasPermission) scope.launch(Dispatchers.IO) { docsVM.sortBy.value = DocSortByPreference.getValueAsync(context); docsVM.loadAsync(context) } } }
-    LaunchedEffect(Channel.sharedFlow) { Channel.sharedFlow.collect { event -> when (event) { is PermissionsResultEvent -> { hasPermission = AppFeatureType.FILES.hasPermission(context); scope.launch(Dispatchers.IO) { docsVM.sortBy.value = DocSortByPreference.getValueAsync(context); docsVM.loadAsync(context) } } } } }
-    LaunchedEffect(docsVM.selectMode.value) { if (docsVM.selectMode.value) scrollBehavior.reset() }
+        if (docsVM.tabsShowTags.value) {
+            when (tab.value) {
+                "all" -> {
+                    docsVM.trash.value = false
+                    docsVM.tag.value = null
+                }
 
-    ViewDocBottomSheet(docsVM)
-    val pageTitle = if (docsVM.selectMode.value) LocaleHelper.getStringF(R.string.x_selected, "count", docsVM.selectedIds.size) else stringResource(id = R.string.docs)
-    if (docsVM.showSortDialog.value) { FileSortDialog(docsVM.sortBy, onSelected = { scope.launch(Dispatchers.IO) { DocSortByPreference.putAsync(context, it); docsVM.sortBy.value = it; docsVM.loadAsync(context) } }, onDismiss = { docsVM.showSortDialog.value = false }) }
-    val onSearch: (String) -> Unit = { docsVM.searchActive.value = false; docsVM.showLoading.value = true; scope.launch(Dispatchers.IO) { docsVM.loadAsync(context) } }
-    BackHandler(enabled = docsVM.selectMode.value || docsVM.showSearchBar.value) {
-        if (docsVM.selectMode.value) docsVM.exitSelectMode()
-        else if (docsVM.showSearchBar.value) { if (!docsVM.searchActive.value || docsVM.queryText.value.isEmpty()) { docsVM.exitSearchMode(); onSearch("") } }
-    }
+                "trash" -> {
+                    docsVM.trash.value = true
+                    docsVM.tag.value = null
+                }
 
-    PScaffold(topBar = {
-        if (docsVM.showSearchBar.value) { ListSearchBar(viewModel = docsVM, onSearch = onSearch); return@PScaffold }
-        PTopAppBar(modifier = Modifier.combinedClickable(onClick = {}, onDoubleClick = { scope.launch { scrollStateMap[pagerState.currentPage]?.scrollToItem(0) } }),
-            navController = navController, navigationIcon = { if (docsVM.selectMode.value) NavigationCloseIcon { docsVM.exitSelectMode() } else NavigationBackIcon { navController.navigateUp() } },
-            title = pageTitle, scrollBehavior = scrollBehavior, actions = {
-                if (!hasPermission) return@PTopAppBar
-                if (docsVM.selectMode.value) { PTopRightButton(label = stringResource(if (docsVM.isAllSelected()) R.string.unselect_all else R.string.select_all), click = { docsVM.toggleSelectAll() }); HorizontalSpace(dp = 8.dp) }
-                else { ActionButtonSearch { docsVM.enterSearchMode() }; ActionButtonSort { docsVM.showSortDialog.value = true } }
-            })
-    }, bottomBar = { AnimatedVisibility(visible = docsVM.showBottomActions(), enter = slideInVertically { it }, exit = slideOutVertically { it }) { DocFilesSelectModeBottomActions(docsVM) } }) { paddingValues ->
-        Column(modifier = Modifier.padding(top = paddingValues.calculateTopPadding())) {
-            if (!hasPermission) { NeedPermissionColumn(R.drawable.file_text, AppFeatureType.FILES.getPermission()!!); return@PScaffold }
-            if (!docsVM.selectMode.value) {
-                PScrollableTabRow(selectedTabIndex = pagerState.currentPage, modifier = Modifier.fillMaxWidth()) {
-                    docsVM.tabs.value.forEachIndexed { index, s -> PFilterChip(modifier = Modifier.padding(start = if (index == 0) 0.dp else 8.dp), selected = pagerState.currentPage == index, onClick = { scope.launch { pagerState.scrollToPage(index) } }, label = { Text(text = s.title + " (" + s.count + ")") }) }
+                else -> {
+                    docsVM.trash.value = false
+                    docsVM.tag.value = tagsVM.itemsFlow.value.find { it.id == tab.value }
                 }
             }
-            DocsPageContent(navController, docsVM, filteredItemsState, scrollStateMap, pagerState, scrollBehavior, topRefreshLayoutState, scope, context, paddingValues.calculateBottomPadding())
+        } else {
+            when (tab.value) {
+                "" -> {
+                    docsVM.trash.value = false
+                    docsVM.fileType.value = ""
+                }
+
+                "trash" -> {
+                    docsVM.trash.value = true
+                    docsVM.fileType.value = ""
+                }
+
+                else -> {
+                    docsVM.trash.value = false
+                    docsVM.fileType.value = tab.value
+                }
+            }
         }
+        scope.launch {
+            scrollBehavior.reset()
+            docsState.scrollStateMap[pagerState.currentPage]?.scrollToItem(0)
+        }
+        scope.launch(Dispatchers.IO) { docsVM.loadAsync(context, tagsVM) }
+    }
+
+    DocsPageOverlays(docsVM, tagsVM, mediaFoldersVM)
+    val pageTitle = docsPageTitle(docsVM, bucketsMap[docsVM.bucketId.value]?.name)
+
+    PScaffold(
+        topBar = {
+            if (docsVM.showSearchBar.value) {
+                ListSearchBar(viewModel = docsVM) {
+                    docsVM.searchActive.value = false
+                    docsVM.showLoading.value = true
+                    scope.launch(Dispatchers.IO) { docsVM.loadAsync(context, tagsVM) }
+                }
+                return@PScaffold
+            }
+            DocsTopBar(
+                navController = navController,
+                docsVM = docsVM,
+                hasPermission = hasPermission.value,
+                pageTitle = pageTitle,
+                scrollBehavior = scrollBehavior,
+                scrollToTop = { scope.launch { docsState.scrollStateMap[pagerState.currentPage]?.scrollToItem(0) } },
+                onOpenTagsManager = { docsVM.showTagsDialog.value = true },
+                onOpenFolders = { docsVM.showFoldersDialog.value = true },
+                onModeSelected = { showTagsMode ->
+                    if (docsVM.tabsShowTags.value == showTagsMode) {
+                        return@DocsTopBar
+                    }
+                    scope.launch(Dispatchers.IO) {
+                        DocTabsModePreference.putAsync(context, showTagsMode)
+                        docsVM.tabsShowTags.value = showTagsMode
+                        docsVM.fileType.value = ""
+                        docsVM.tag.value = null
+                        docsVM.trash.value = false
+                        docsVM.loadAsync(context, tagsVM)
+                    }
+                    scope.launch { pagerState.scrollToPage(0) }
+                },
+                onSortSelected = { sortBy ->
+                    scope.launch(Dispatchers.IO) {
+                        DocSortByPreference.putAsync(context, sortBy)
+                        docsVM.sortBy.value = sortBy
+                        docsVM.loadAsync(context, tagsVM)
+                    }
+                },
+            )
+        },
+        bottomBar = {
+            AnimatedVisibility(
+                visible = docsVM.showBottomActions(),
+                enter = slideInVertically { it },
+                exit = slideOutVertically { it },
+            ) {
+                DocFilesSelectModeBottomActions(docsVM, tagsVM)
+            }
+        },
+    ) { paddingValues ->
+        DocsPageBody(
+            navController = navController,
+            docsVM = docsVM,
+            tagsVM = tagsVM,
+            filteredItemsState = docsState.filteredItemsState,
+            docsTagsMap = docsTagsMap,
+            hasPermission = hasPermission.value,
+            scrollStateMap = docsState.scrollStateMap,
+            pagerState = pagerState,
+            scrollBehavior = scrollBehavior,
+            topRefreshLayoutState = topRefreshLayoutState,
+            scope = scope,
+            context = context,
+            topPadding = paddingValues.calculateTopPadding(),
+            bottomPadding = paddingValues.calculateBottomPadding(),
+        )
     }
 }

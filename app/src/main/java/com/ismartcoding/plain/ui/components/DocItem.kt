@@ -11,9 +11,11 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -24,6 +26,7 @@ import com.ismartcoding.lib.extensions.getFilenameExtension
 import com.ismartcoding.lib.extensions.isPdfFile
 import com.ismartcoding.lib.extensions.isTextFile
 import com.ismartcoding.plain.extensions.formatDateTime
+import com.ismartcoding.plain.db.DTag
 import com.ismartcoding.plain.features.file.DFile
 import com.ismartcoding.plain.helpers.AppHelper
 import com.ismartcoding.plain.ui.base.HorizontalSpace
@@ -33,6 +36,7 @@ import com.ismartcoding.plain.ui.nav.navigatePdf
 import com.ismartcoding.plain.ui.nav.navigateTextFile
 import com.ismartcoding.plain.ui.models.DocsViewModel
 import com.ismartcoding.plain.ui.models.select
+import com.ismartcoding.plain.ui.theme.listItemTag
 import com.ismartcoding.plain.ui.theme.PlainTheme
 import com.ismartcoding.plain.ui.theme.listItemSubtitle
 import com.ismartcoding.plain.ui.theme.listItemTitle
@@ -44,6 +48,8 @@ fun DocItem(
     navController: NavHostController,
     docsVM: DocsViewModel,
     m: DFile,
+    tags: List<DTag>,
+    onTagClick: (DTag) -> Unit,
 ) {
     Row {
         if (docsVM.selectMode.value) {
@@ -108,6 +114,23 @@ fun DocItem(
                         text = m.size.formatBytes() + ", " + m.updatedAt.formatDateTime(),
                         style = MaterialTheme.typography.listItemSubtitle(),
                     )
+                    if (tags.isNotEmpty()) {
+                        VerticalSpace(dp = 8.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            tags.forEach { tag ->
+                                ClickableText(
+                                    text = AnnotatedString("#" + tag.name),
+                                    modifier = Modifier.padding(end = 8.dp),
+                                    style = MaterialTheme.typography.listItemTag(),
+                                    onClick = {
+                                        if (!docsVM.selectMode.value) {
+                                            onTagClick(tag)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

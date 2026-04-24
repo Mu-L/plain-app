@@ -9,6 +9,7 @@ data class Doc(
     val path: String,
     val extension: String,
     val size: Long,
+    val bucketId: String,
     val createdAt: Instant,
     val updatedAt: Instant,
 )
@@ -20,5 +21,5 @@ data class DocExtGroup(
 
 fun DFile.toDocModel(): Doc {
     val ext = name.substringAfterLast('.', "").lowercase()
-    return Doc(ID(mediaId), name, path, ext, size, createdAt ?: updatedAt, updatedAt)
+    return Doc(ID(mediaId), name, path, ext, size, bucketId, createdAt ?: updatedAt, updatedAt)
 }

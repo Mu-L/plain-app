@@ -1,16 +1,25 @@
 package com.ismartcoding.plain.features.media
 
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import com.ismartcoding.lib.content.ContentWhere
 import com.ismartcoding.lib.extensions.find
 import com.ismartcoding.lib.extensions.forEach
 import com.ismartcoding.lib.extensions.getPagingCursor
+import com.ismartcoding.lib.extensions.getSearchCursor
+import com.ismartcoding.lib.extensions.getLongValue
 import com.ismartcoding.lib.extensions.getStringValue
+import com.ismartcoding.lib.pinyin.Pinyin
+import com.ismartcoding.plain.data.DMediaBucket
 import com.ismartcoding.lib.extensions.map
 import com.ismartcoding.lib.extensions.queryCursor
+import com.ismartcoding.lib.logcat.LogCat
 import com.ismartcoding.plain.MainApp
+import com.ismartcoding.plain.data.TagRelationStub
 import com.ismartcoding.plain.extensions.normalizeComparison
 import com.ismartcoding.plain.extensions.parseSizeToBytes
 import com.ismartcoding.plain.extensions.toFile
@@ -30,7 +39,7 @@ object DocsHelper : BaseContentHelper() {
     override val uriExternal: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
     override fun getProjection(): Array<String> {
-        return arrayOf(
+        val cols = mutableListOf(
             MediaStore.Files.FileColumns._ID,
             MediaStore.Files.FileColumns.DISPLAY_NAME,
             MediaStore.Files.FileColumns.DATA,
@@ -40,6 +49,10 @@ object DocsHelper : BaseContentHelper() {
             MediaStore.Files.FileColumns.MIME_TYPE,
             MediaStore.Files.FileColumns.MEDIA_TYPE,
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            cols.add(MediaStore.MediaColumns.BUCKET_ID)
+        }
+        return cols.toTypedArray()
     }
 
     override suspend fun buildWhereAsync(query: String): ContentWhere {
@@ -70,7 +83,13 @@ object DocsHelper : BaseContentHelper() {
                         }
                         where.add("${MediaStore.Files.FileColumns.SIZE} $op ?", bytes.toString())
                     }
-                    "ids" -> where.addIn(MediaStore.Files.FileColumns._ID, it.value.split(","))
+                    "ids" -> {
+                        where.addIn(MediaStore.Files.FileColumns._ID, it.value.split(","))
+                    }
+                    "bucket_id" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        where.addEqual(MediaStore.MediaColumns.BUCKET_ID, it.value)
+                    }
+                    "trash" -> where.trash = it.value.toBooleanStrictOrNull()
                 }
             }
         }
@@ -93,6 +112,18 @@ object DocsHelper : BaseContentHelper() {
             limit, offset, sortBy.toFileSortBy()
         )?.map { cursor, cache ->
             cursor.toFile(cache)
+        } ?: emptyList()
+    }
+
+    suspend fun getTagRelationStubsAsync(
+        context: Context,
+        query: String,
+    ): List<TagRelationStub> {
+        return context.contentResolver.getSearchCursor(uriExternal, getProjection(), buildWhereAsync(query))?.map { cursor, cache ->
+            val id = cursor.getStringValue(MediaStore.Files.FileColumns._ID, cache)
+            val title = cursor.getStringValue(MediaStore.Files.FileColumns.DISPLAY_NAME, cache)
+            val size = cursor.getLongValue(MediaStore.Files.FileColumns.SIZE, cache)
+            TagRelationStub(id, title, size)
         } ?: emptyList()
     }
 
@@ -119,5 +150,72 @@ object DocsHelper : BaseContentHelper() {
             .queryCursor(uriExternal, arrayOf(MediaStore.Files.FileColumns._ID), "${MediaStore.Files.FileColumns.DATA} = ?", arrayOf(path))?.find { cursor, cache ->
                 cursor.getStringValue(MediaStore.Files.FileColumns._ID, cache)
             }
+    }
+
+    fun getBucketsAsync(context: Context): List<DMediaBucket> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val bucketMap = mutableMapOf<String, DMediaBucket>()
+        val projection = arrayOf(
+            MediaStore.MediaColumns.BUCKET_ID,
+            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATA,
+        )
+        val mimeTypePlaceholders = extraDocumentMimeTypes.joinToString(",") { "?" }
+        val selection = "(${MediaStore.Files.FileColumns.MIME_TYPE} LIKE ? OR ${MediaStore.Files.FileColumns.MIME_TYPE} IN ($mimeTypePlaceholders)) AND ${MediaStore.Files.FileColumns.SIZE} > 0 AND ${MediaStore.MediaColumns.BUCKET_DISPLAY_NAME} != ''"
+        val selectionArgs = (listOf("text/%") + extraDocumentMimeTypes).toTypedArray()
+        context.contentResolver.query(uriExternal, projection, selection, selectionArgs, null)?.forEach { cursor, cache ->
+            val bucketId = cursor.getStringValue(MediaStore.MediaColumns.BUCKET_ID, cache)
+            val bucketName = cursor.getStringValue(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, cache)
+            val size = cursor.getLongValue(MediaStore.MediaColumns.SIZE, cache)
+            val path = cursor.getStringValue(MediaStore.MediaColumns.DATA, cache)
+            val bucket = bucketMap[bucketId]
+            if (bucket != null) {
+                if (bucket.topItems.size < 4) bucket.topItems.add(path)
+                bucket.size += size
+                bucket.itemCount++
+            } else {
+                bucketMap[bucketId] = DMediaBucket(bucketId, bucketName, 1, size, mutableListOf(path))
+            }
+        }
+        return bucketMap.values.sortedBy { Pinyin.toPinyin(it.name).lowercase() }
+    }
+
+    fun getItemUri(id: String): Uri = Uri.withAppendedPath(uriExternal, id)
+
+    suspend fun getTrashedIdsAsync(context: Context, query: String): Set<String> {
+        val where = buildWhereAsync(query)
+        where.trash = true
+        return context.contentResolver.getSearchCursor(uriExternal, getProjection(), where)?.map { cursor, cache ->
+            cursor.getStringValue(MediaStore.Files.FileColumns._ID, cache)
+        }?.toSet() ?: emptySet()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun trashByIdsAsync(context: Context, ids: Set<String>) {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.IS_TRASHED, 1)
+        }
+        ids.forEach { id ->
+            try {
+                context.contentResolver.update(getItemUri(id), contentValues, null, null)
+            } catch (ex: Exception) {
+                LogCat.w("Failed to trash doc id=$id: ${ex.message}")
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun restoreByIdsAsync(context: Context, ids: Set<String>) {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.IS_TRASHED, 0)
+        }
+        ids.forEach { id ->
+            try {
+                context.contentResolver.update(getItemUri(id), contentValues, null, null)
+            } catch (ex: Exception) {
+                LogCat.w("Failed to restore doc id=$id: ${ex.message}")
+            }
+        }
     }
 }

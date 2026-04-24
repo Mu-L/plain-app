@@ -11,6 +11,7 @@ import com.ismartcoding.plain.data.DMediaBucket
 import com.ismartcoding.plain.enums.DataType
 import com.ismartcoding.plain.features.locale.LocaleHelper
 import com.ismartcoding.plain.features.media.AudioMediaStoreHelper
+import com.ismartcoding.plain.features.media.DocsHelper
 import com.ismartcoding.plain.features.media.ImageMediaStoreHelper
 import com.ismartcoding.plain.features.media.VideoMediaStoreHelper
 import com.ismartcoding.plain.ui.helpers.LoadingHelper
@@ -54,6 +55,10 @@ class MediaFoldersViewModel : ViewModel() {
                 } else {
                     emptyList()
                 }
+            }
+
+            DataType.DOC -> {
+                DocsHelper.getBucketsAsync(context)
             }
 
             else -> {

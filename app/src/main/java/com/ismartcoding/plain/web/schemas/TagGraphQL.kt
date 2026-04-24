@@ -11,6 +11,7 @@ import com.ismartcoding.plain.features.feed.FeedEntryHelper
 import com.ismartcoding.plain.features.media.AudioMediaStoreHelper
 import com.ismartcoding.plain.features.media.CallMediaStoreHelper
 import com.ismartcoding.plain.features.media.ContactMediaStoreHelper
+import com.ismartcoding.plain.features.media.DocsHelper
 import com.ismartcoding.plain.features.media.ImageMediaStoreHelper
 import com.ismartcoding.plain.features.media.VideoMediaStoreHelper
 import com.ismartcoding.plain.features.sms.SmsHelper
@@ -94,6 +95,10 @@ fun SchemaBuilder.addTagSchema() {
                     items = CallMediaStoreHelper.getIdsAsync(context, query).map { TagRelationStub(it) }
                 }
 
+                DataType.DOC -> {
+                    items = DocsHelper.getTagRelationStubsAsync(context, query)
+                }
+
                 else -> {}
             }
 
@@ -161,6 +166,10 @@ fun SchemaBuilder.addTagSchema() {
 
                 DataType.CALL -> {
                     ids = CallMediaStoreHelper.getIdsAsync(context, query)
+                }
+
+                DataType.DOC -> {
+                    ids = DocsHelper.getIdsAsync(context, query)
                 }
 
                 else -> {}

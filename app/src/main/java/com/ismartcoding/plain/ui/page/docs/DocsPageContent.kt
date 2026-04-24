@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.ismartcoding.lib.helpers.CoroutinesHelper.withIO
+import com.ismartcoding.plain.db.DTag
 import com.ismartcoding.plain.features.file.DFile
 import com.ismartcoding.plain.ui.base.NoDataColumn
 import com.ismartcoding.plain.ui.base.TopSpace
@@ -30,6 +31,7 @@ import com.ismartcoding.plain.ui.base.pullrefresh.PullToRefresh
 import com.ismartcoding.plain.ui.base.pullrefresh.RefreshLayoutState
 import com.ismartcoding.plain.ui.components.DocItem
 import com.ismartcoding.plain.ui.models.DocsViewModel
+import com.ismartcoding.plain.ui.models.TagsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,13 +40,15 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun DocsPageContent(
     navController: NavHostController, docsVM: DocsViewModel,
+    tagsVM: TagsViewModel,
     filteredItemsState: List<DFile>, scrollStateMap: MutableMap<Int, LazyListState>,
+    docsTagsMap: Map<String, List<DTag>>,
     pagerState: PagerState, scrollBehavior: TopAppBarScrollBehavior,
     topRefreshLayoutState: RefreshLayoutState, scope: CoroutineScope,
     context: android.content.Context, bottomPadding: Dp,
 ) {
     if (pagerState.pageCount == 0) { NoDataColumn(loading = docsVM.showLoading.value, search = docsVM.showSearchBar.value); return }
-    HorizontalPager(state = pagerState, userScrollEnabled = false) { index ->
+    HorizontalPager(state = pagerState, userScrollEnabled = !docsVM.selectMode.value) { index ->
         PullToRefresh(refreshLayoutState = topRefreshLayoutState) {
             AnimatedVisibility(visible = true, enter = fadeIn(), exit = fadeOut()) {
                 if (filteredItemsState.isNotEmpty()) {
@@ -53,9 +57,31 @@ internal fun DocsPageContent(
                     LazyColumnScrollbar(state = scrollState) {
                         LazyColumn(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection), state = scrollState) {
                             item { TopSpace() }
-                            items(filteredItemsState) { m -> DocItem(navController, docsVM, m); VerticalSpace(dp = 8.dp) }
+                            items(filteredItemsState) { m ->
+                                val tags = docsTagsMap[m.id] ?: emptyList()
+                                DocItem(
+                                    navController = navController,
+                                    docsVM = docsVM,
+                                    m = m,
+                                    tags = tags,
+                                    onTagClick = { tag ->
+                                        if (!docsVM.tabsShowTags.value) {
+                                            return@DocItem
+                                        }
+                                        val idx = tagsVM.itemsFlow.value.indexOfFirst { it.id == tag.id }
+                                        if (idx != -1) {
+                                            scope.launch { pagerState.scrollToPage(idx + 1) }
+                                        }
+                                    }
+                                )
+                                VerticalSpace(dp = 8.dp)
+                            }
                             item {
-                                if (filteredItemsState.isNotEmpty() && !docsVM.noMore.value) { LaunchedEffect(Unit) { scope.launch(Dispatchers.IO) { withIO { docsVM.moreAsync(context) } } } }
+                                if (filteredItemsState.isNotEmpty() && !docsVM.noMore.value) {
+                                    LaunchedEffect(Unit) {
+                                        scope.launch(Dispatchers.IO) { withIO { docsVM.moreAsync(context, tagsVM) } }
+                                    }
+                                }
                                 LoadMoreRefreshContent(docsVM.noMore.value)
                             }
                             item { VerticalSpace(dp = bottomPadding) }

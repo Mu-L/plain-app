@@ -807,3 +807,8 @@ object AiImageSearchEnabledPreference : BasePreference<Boolean>() {
     override val default = false
     override val key = booleanPreferencesKey("ai_image_search_enabled")
 }
+
+object DocTabsModePreference : BasePreference<Boolean>() {
+    override val default = false // false = ext groups mode, true = tags mode
+    override val key = booleanPreferencesKey("doc_tabs_mode")
+}
